@@ -1,0 +1,7 @@
+Data is divided into 10 different datasets each containing 504, 56 samples accordingly, each smaples is a single person with 23 chromosomes.
+
+Training set is 504 samples
+Test set is 56 samples
+
+samples were drawn by order, none of the test sets contains samples from other sets
+
