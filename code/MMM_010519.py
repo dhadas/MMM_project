@@ -6,7 +6,11 @@ import warnings
 import json
 
 num_of_topics = 12
+num_of_muts = 96
+num_of_samples = 560
 
+
+warnings.filterwarnings("ignore", message="divide by zero encountered in log")
 
 class Theta:
 
@@ -25,10 +29,9 @@ class Theta:
              A matrix of means, where Emeans i,j is the mean of probability that word j from theta came from signature i.
 
         """
-
-        self.e = np.zeros((num_of_topics, 96))
+        self.e = np.zeros((num_of_topics, num_of_muts))
         self.pie = np.zeros(num_of_topics)
-        self.Emeans = np.zeros((num_of_topics, 96))
+        self.Emeans = np.zeros((num_of_topics, num_of_muts))
 
 
 
@@ -60,10 +63,10 @@ class Theta:
         self.pie /= s
 
         #Generate random eij matrix where (i,j) is P(word is j | signiture is i)
-        self.e = np.zeros((num_of_topics, 96))
+        self.e = np.zeros((num_of_topics, num_of_muts))
         for i in range (num_of_topics):
             #generate random vector for each sig
-            self.e[i] = np.random.rand(96)
+            self.e[i] = np.random.rand(num_of_muts)
             #normalize probabilities
             s = sum(self.e[i])
             self.e[i] /= s
@@ -73,7 +76,7 @@ class Theta:
         self.pie = np.log(self.pie)
         return self
 
-    def fill_Emeans(self, B):
+    def fill_Emeans(self, B) -> int:
         """
             Updates the Emeans matrix of theta by computing the probability that word j from theta came from signature i.
 
@@ -100,7 +103,7 @@ class Theta:
         return 1
 
 
-    def theta_t(self,E_res):
+    def theta_t(self,E_res, fixed_e_flag: bool = False, fixed_pi_flag: bool = False):
         """
             Builds a new Theta object by computing its pie and e values, using the current theta.
 
@@ -113,9 +116,15 @@ class Theta:
         theta_new = Theta()
         theta_new.e = self.e.copy()
         # print(self.Emeans, self.Emeans.sum(axis=0))
-        # for i in range(96):
-        #     theta_new.e[:,i] = np.subtract(E_res[:,i], logsumexp(E_res,axis=1))
-        # theta_new.e[np.isnan(theta_new.e)] = 0
+
+
+        # If fixed e flag is False, then e matrix should be updated.
+        if not fixed_e_flag:
+            # print("fixed e_flag is off, updating e matrix\n")
+            for i in range(num_of_muts):
+                theta_new.e[:,i] = np.subtract(E_res[:,i], logsumexp(E_res,axis=1))
+            theta_new.e[np.isnan(theta_new.e)] = 0
+
         e_summed = np.zeros(num_of_topics)
         for i in range(E_res.shape[0]):
             # print(E_res)
@@ -143,9 +152,9 @@ class Theta:
             float.
                 The log likelihood of X given theta
         """
-        res_array = np.zeros((560))
-        for j in range(560):
-            arr = np.zeros(96)
+        res_array = np.zeros((num_of_samples))
+        for j in range(num_of_samples):
+            arr = np.zeros(num_of_muts)
             for i in range(array[j].e.shape[1]):
                 # print(self.e.T[i])
                 arr[i] = logsumexp(array[j].e.T[i] + array[j].pie) + np.log(X[X.columns[j]].loc[i])
@@ -154,8 +163,8 @@ class Theta:
 
     @staticmethod
     def log_likelihood2(X, array) -> np.array:
-        res_array = np.zeros((560))
-        for j in range(560):
+        res_array = np.zeros((num_of_samples))
+        for j in range(num_of_samples):
             curr_theta = array[j]
             temp = curr_theta.e.T + curr_theta.pie
             joint_prob = logsumexp(temp, axis=1)
@@ -164,7 +173,7 @@ class Theta:
 
             res_array[j] = curr_LL
 
-        return logsumexp(res_array)
+        return sum(res_array)
 
 
     def check_convergence(self, X, threshold,arr_new,arr_old):
@@ -195,13 +204,27 @@ class Theta:
             return 0
 
 
-def set_num_of_topics(n: int):
+def set_num_of_topics(k: int):
     global num_of_topics
-    num_of_topics = n
+    num_of_topics = k
+    print(f"Changed num of topics to : {num_of_topics}")
+    return
+
+def set_num_of_muts(n: int):
+    global num_of_muts
+    num_of_muts = n
+    print(f"Changed num of muts to : {num_of_muts}")
+    return
+
+def set_num_of_samples(m: int):
+    global num_of_samples
+    num_of_samples = m
+    print(f"Changed num of samples to : {num_of_samples}")
     return
 
 
-def generate_LL_df(model_name: str, k: int, E_mat: pd.DataFrame, chrom_lst : list, n: int = 10):
+
+def generate_LL_df(model_name: str, k: int, chrom_lst : list, E_mat: pd.DataFrame = None, n: int = 3, fixed_e_flag: bool = False):
     # Create a dictionary of LL lists for each chromosome, later to be converted to a DataFrame
     ll_dict = {}
     model_name = model_name  # Change to whaterver model you are testing
@@ -215,14 +238,21 @@ def generate_LL_df(model_name: str, k: int, E_mat: pd.DataFrame, chrom_lst : lis
         # dataset with a single chromosome out
         training_set = pd.read_csv(f"data/cross_val_datasets/full_data_chrom{chrom_id}out.csv").drop("Unnamed: 0", axis=1)
 
-        print(f"Now training MMM model, on full dataset with chrom #{chrom_id} out.\n")
+        print(f"Now training {model_name} model, on full dataset with chrom #{chrom_id} out.\n")
         ll_dict[f'{model_name}_{num_of_topics}_{chrom_id}'] = []
 
-        # For each chromosome generate 10 results to overcome random data
+        # For each chromosome generate n results to overcome random data
         for i in range(n):
-            print(f"Iteration: #{i} : ", end="")
-            Model = fit(training_set, 0.001, 50, E_mat)  # Change input matrix to whichever matrix you want
-            if (Model == 1):  # if model didnot converge, 1 is appended instead of a negative likelihood score
+
+
+            if not fixed_e_flag: #Fit de-novo
+                print(f"Mode de-novo, Iteration: #{i} : ", end="")
+                Model = fit(training_set, 0.001, 50)  # Change input matrix to whichever matrix you want
+            else: #Re-fit - meaning muts*topics probabilites matrix (E_mat) remains fixed.
+                print(f"Mode refit,  Iteration: #{i} : ", end="")
+                Model = fit(training_set, 0.001, 50, E_mat, None, fixed_e_flag, False)
+
+            if (Model == 1):  # if model didn't converge, 1 is appended instead of a negative likelihood score
                 print("Did not converrge, appending 1\n")
                 ll_dict[f'{model_name}_{num_of_topics}_{chrom_id}'].append(1.0)
             else:
@@ -236,11 +266,11 @@ def generate_LL_df(model_name: str, k: int, E_mat: pd.DataFrame, chrom_lst : lis
     return pd.DataFrame(ll_dict)
 
 
-def fix_count(X, len = 96):
+def fix_count(X, len = num_of_muts):
 
     """
     Takes as input a vector with indices and count how many time each one of them was seen.
-    Limited to 96 for now.
+    Limited to num_of_muts for now.
 
     Parameters
     ----------
@@ -266,7 +296,8 @@ def fix_count(X, len = 96):
 
 
 
-def fit(X, threshold, max_iterations, fixed_e : pd.DataFrame = None, init_pie : pd.DataFrame = None):
+def fit(X, threshold, max_iterations, init_e : pd.DataFrame = None, init_pie : pd.DataFrame = None,
+        fixed_e_flag: bool = False, fixed_pi_flag: bool = False):
     """
         fit the model to the data X until threshold is met or until max_iterations.
 
@@ -297,86 +328,54 @@ def fit(X, threshold, max_iterations, fixed_e : pd.DataFrame = None, init_pie : 
     # B = fix_count(X) # needs fixing
     #Read intial e values
 
-    ##Needs to be an array - of 560 theta
+    ##Needs to be an array - of num_of_samples theta, #Initiate current theta model, randomly
     arr = []
-    #Initiate current theta model
-
-    for i in range(560):
+    for i in range(num_of_samples):
         theta_curr = Theta()
         theta_curr.build_random_theta()
         arr.append(theta_curr)
 
     # If an initial pi matrix wass provided, assign it by order to each theta model (representing a single person)
     if init_pie is not None:
-        print("Initial pi provided!, assigninig values. \n")
-        for i in range(560):
+        print("Setting initial pie vecs for each sample\n")
+        for i in range(num_of_samples):
             arr[i].pie = np.array(init_pie.iloc[i].values[1:]).astype(np.float64)
             arr[i].pie = np.log(arr[i].pie)
 
+    #  If an initial e matrix wass provided, assign it by order to each theta model (representing a single person)
+    if( init_e is not None):
+        print("Setting initial E mat for all samples\n")
+        for i in range(num_of_samples):
+            arr[i].e = np.log(init_e)
 
 
+    E_res = np.zeros((num_of_topics,num_of_muts))
 
-    #Fill theta with randomized values then transform to log of values.
-
-    #theta_curr is now randomized and transformed to log
-
-    #For checking basic model works
-    #######
-    # theta_curr.pie = np.array([0.23305193248719497, 0.0014132314926197209, 0.20416660764668343, 0.00020190401189555402, 0.20084343287046813, 0.15847818668246588, 0.013389301125281252, 0.0022095205339864228, 0.08674215833197821, 0.0671392537284252, 0.01933872390541033, 0.013025747183590633])
-    if( fixed_e is not None):
-        for i in range(560):
-            arr[i].e = np.log(fixed_e)
-
-
-
-    # print(theta_curr.pie)
-    # theta_curr.pie = np.log(theta_curr.pie)
-    # print(theta_curr.pie)
-    # theta_curr.e = np.log(theta_curr.e)
-    E_res = np.zeros((num_of_topics,96))
-
-    for i in range(560):
+    for i in range(num_of_samples):
         arr[i].fill_Emeans(X[X.columns[i]])
         np.logaddexp(E_res,arr[i].Emeans,E_res)
-    E_res = E_res - np.log(560)
-    # print(E_res.shape)
-    #######
-    # print(E_res)
-
-    # print(theta_curr.pie)
-    # print(theta_curr.e)
+    E_res = E_res - np.log(num_of_samples)
     iter = 0
     conv = 0
-    E_res1 = np.zeros((num_of_topics,96))
+    E_res1 = np.zeros((num_of_topics,num_of_muts))
 
     while (conv == 0 and iter < max_iterations):
-        # print(theta_curr.e, theta_curr.e.sum())
-        # print("\n")
-        # Store previous model theta
-        # print(theta_curr.pie)
         arr_old = arr.copy()
-        # print(arr[0].pie)
-        for i in range(560):
+        for i in range(num_of_samples):
             theta_prev = arr[i].copy()
         # maximze
-            arr[i] = theta_prev.theta_t(E_res)
+            arr[i] = theta_prev.theta_t(E_res, fixed_e_flag, fixed_pi_flag)
         #recalculate E step
             arr[i].fill_Emeans(X[X.columns[i]])
             np.logaddexp(E_res1,arr[i].Emeans,E_res1)
         # print(arr[0].pie)
-        E_res1 = E_res1 - np.log(560)
+        E_res1 = E_res1 - np.log(num_of_samples)
         E_res = E_res1.copy()
         # Check
         conv = theta_curr.check_convergence(X, threshold,arr,arr_old)
-        # print(conv)
-        # if(iter > 5):
-        #     print(theta_prev.log_likelihood(X))
-        #
-        #     print(theta_curr.log_likelihood(X))
-        #     print("\n")
         iter += 1
-        # print(iter)
 
+    #Check final convergence status
     if(conv == 0):
         print("did not converge!")
         return 1
@@ -386,6 +385,29 @@ def fit(X, threshold, max_iterations, fixed_e : pd.DataFrame = None, init_pie : 
     return arr
 
 
+
+def upload_model(terms_path,topics_path,num_of_topics, model_name = None):
+
+
+    #enter line that says how many topics are used
+    set_num_of_topics((num_of_topics))
+    terms = pd.read_csv(terms_path,index_col=0)
+    topics = pd.read_csv(topics_path,index_col=0)
+
+    if(model_name is not None and str.lower(model_name) == 'ctm'):
+        terms = pd.read_csv(terms_path, index_col=0).reset_index()
+        topics = pd.read_csv(topics_path, index_col=0).reset_index()
+        print(terms)
+        terms = np.exp(terms)
+    arr = []
+    for i in range(num_of_samples):
+        theta = Theta()
+        theta.pie = np.log(topics.loc[topics.index[i]].values)
+        theta.e = np.log(terms.values)
+        arr.append(theta)
+    return arr
+
+# model = upload_model("mmm_outputs/LDA_12_term_matrix.csv","mmm_outputs/LDA_12_topics_matrix.csv",12)
 
 
 def transform_chr_to_np(chr_dict):
@@ -398,152 +420,3 @@ def transform_chr_to_np(chr_dict):
 
     return np.array(lst)
 
-
-
-# with open('data/ICGC-BRCA.json') as json_file:
-#     data = json.load(json_file)
-#     # print(data)
-#     first = True
-#
-#     for p in data:
-#         if(first):
-#             X = transform_chr_to_np(data[p])
-#             first = False
-#         else:
-#             X =  np.block([X, transform_chr_to_np(data[p])])
-#             # X = transform_chr_to_np(data[p])
-
-
-warnings.filterwarnings("ignore", message="divide by zero encountered in log")
-
-X = pd.read_csv("data/010519/lets_do_some_shit.csv",index_col=0)
-
-'''
-given_e_mat = pd.read_csv("data/given_E12_matrix.csv", index_col=0).values
-print(X)
-print X.shape
-mmm_560 = fit(X, 0.001, 100, given_e_mat)[0]
-
-MMM_res = (np.exp(mmm_560.pie))
-print "Our pi is:\n ", MMM_res
-
-'''
-
-'''
-
-x = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95])
-y = fit(x, 0.0001, 1000)[0]
-res = (np.exp(y.pie))
-print("Our pi is:\n ", res)
-trained_pi =  ([0.01991760467312221, 7.702496151008292e-25, 0.6100566325531255, 0.27139516031925676, 0.007204800838670103, 0.0017296078671290866, 3.516095608561591e-29, 0.01992175288893023, 0.026014160241472187, 7.514772239813612e-07, 0.006167481107732912, 0.037592048033336885])
-print('\nTrained pi is:\n',trained_pi)
-print("\nVector of differences (ours - trained) is: \n", np.subtract(res, trained_pi))
-
-
-'''
-
-
-# print 'Now fitting MMM MODEL \n'
-# MMM_LL_VEC = []
-# given_e_mat = pd.read_csv("data/given_E12_matrix.csv", index_col=0).values
-
-# for i in range(3):
-
-# print(w[0].e)
-# print(w[0].pie)
-# print(w[1].e)
-# print(w[1].pie)
-
-    # print(MMM_model.e, MMM_model.pie)
-    # MMM_LL_VEC.append(MMM_model.log_likelihood(X))
-#
-#
-
-
-
-# df_LL_all_models = pd.DataFrame()
-# df_LL_all_models['MMM_model']  = MMM_LL_VEC
-# LL_VEC = []
-# n = 20
-# LDA_12_E = pd.read_csv("data/010519/LDA_12_term_Ematrix.csv", index_col=0).values
-# # LDA_12_pi = pd.read_csv("data/010519/LDA_12_topics_matrix.csv")
-# print("Now fitting LDA 12 model\n")
-# for i in range(n):
-#     print(f"Iteration: {i}\n")
-#     LDA_12_Model = fit(X, 0.001, 10, LDA_12_E)
-#     LL_VEC.append(Theta.log_likelihood(X, LDA_12_Model))
-#
-# print(LDA_LL_vec)
-#
-# LL_vec = []
-# CTM_12_E = pd.read_csv("data/010519/CTM_15_e.csv", index_col=0).values
-# # LDA_12_pi = pd.read_csv("data/010519/LDA_12_topics_matrix.csv")
-# print("Now fitting CTM 12 model\n")
-# for i in range(n):
-#     print(f"Iteration: {i}\n")
-#     LDA_12_Model = fit(X, 0.001, 10, LDA_12_E)
-#     LL_vec.append(Theta.log_likelihood(X, CTM_12_E))
-#
-# print(LL_vec)
-#
-# set_num_of_topics(15)
-#
-#
-#
-
-
-
-
-#
-# print("Now fitting MMM 12 model\n")
-# MMM_12_E = pd.read_csv("data/010519/LDA_12_term_Ematrix.csv", index_col=0).values
-
-
-# # print(LDA_Emat)
-#
-# for i in range(3):
-#     LDA_model= fit(X, 0.001, 100, LDA_Emat)[0]
-#     print(LDA_model)
-#     LDA_LL_vec.append(LDA_model.log_likelihood(X))
-#
-#
-#
-# # print "Our CTM pi is:\n ", CTM_res
-# print 'LDA ll vector of 20 runs with random pi, and fixed E matrix:\n'
-# print LDA_LL_vec
-# df_LL_all_models['LDA_model']  = LDA_LL_vec
-#
-#
-# CTM_LL_vec = []
-# print 'Now fitting CTM MODEL \n'
-# CTM_Emat = pd.read_csv("data/CTM_12_term_matrix.csv", index_col=0).values
-# # print(CTM_Emat)
-# for i in range(20):
-#     CTM_model= fit(X, 0.001, 100, CTM_Emat)[0]
-#     CTM_LL_vec.append(CTM_model.log_likelihood(X))
-#
-#
-# # Do exoenonet for representation
-# # CTM_res = (np.exp(LDA_model.pie))
-#
-# # print "Our CTM pi is:\n ", CTM_res
-# print 'CTM ll vector of 20 runs with random pi, and fixed E matrix:\n'
-# print CTM_LL_vec
-#
-# df_LL_all_models['CTM_model']  = CTM_LL_vec
-# print(df_LL_all_models)
-#
-# df_LL_all_models.to_csv("data/results_20_runs.csv")
-
-# print(CTM_model.log_likelihood(X))
-#
-#
-# ''' @param sample_data:dict where keys are chromosomes and values are a dict with only 1 key
-#         'Sequence' and it's value is list of mutations number
-#         @ret : log_probability calculated using current pi, e matrix to see sample data
-#     '''
-#     def log_probability(self, sample_data):
-#         tmp = self.e_mat.T + self.pi
-#         joint_prob = logsumexp(tmp, axis=1)
-#         mut_counter = mutation_occurences_counter(sample_data)
-#         return np.dot(joint_prob, mut_counter)
